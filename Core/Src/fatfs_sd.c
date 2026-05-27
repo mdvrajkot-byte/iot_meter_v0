@@ -94,34 +94,50 @@ static uint8_t SD_SendCmd(uint8_t cmd, uint32_t arg)
 
 DSTATUS SD_disk_initialize(BYTE pdrv)
 {
-ty = 0;
-    uint8_t res_cmd0 = SD_SendCmd(CMD0, 0); // રિસ્પોન્સ પકડો
+    uint8_t n, cmd, ty, ocr[4];
+    uint32_t timeout;
     
-    // ----- નવો ડિબગ કોડ શરૂ (Mutex સાથે) -----
-    extern osMutexId_t lcdMutexHandle; // main.c માંથી Mutex લાવો
-    extern void lcd_clear(void);
-    extern void lcd_put_cur(int row, int col);
-    extern void lcd_send_string(char *str);
-    char debugBuf[16];
+    if (pdrv != 0) return STA_NOINIT;
     
-    // Mutex મેળવો
-    if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
-        lcd_clear();
-        lcd_put_cur(0, 0);
-        lcd_send_string("CMD0 Response:");
+    SD_CS_HIGH();
+    HAL_Delay(10);
+    
+    for (n = 10; n; n--) SPI_TxRx(0xFF);
+    
+    ty = 0;
+    if (SD_SendCmd(CMD0, 0) == 1) {
+        timeout = HAL_GetTick() + 1000;
         
-        sprintf(debugBuf, "HEX: 0x%02X", res_cmd0);
-        lcd_put_cur(1, 0);
-        lcd_send_string(debugBuf);
-        
-        osMutexRelease(lcdMutexHandle); // Mutex પાછો આપો
+        if (SD_SendCmd(CMD8, 0x1AA) == 1) {
+            for (n = 0; n < 4; n++) ocr[n] = SPI_TxRx(0xFF);
+            if (ocr[2] == 0x01 && ocr[3] == 0xAA) {
+                while (HAL_GetTick() < timeout && SD_SendCmd(CMD41, 1UL << 30));
+                if (HAL_GetTick() < timeout && SD_SendCmd(CMD58, 0) == 0) {
+                    for (n = 0; n < 4; n++) ocr[n] = SPI_TxRx(0xFF);
+                    ty = (ocr[0] & 0x40) ? 3 : 2; 
+                }
+            }
+        } else {
+            cmd = (SD_SendCmd(CMD55, 0) <= 1 && SD_SendCmd(CMD41, 0) <= 1) ? CMD41 : CMD1;
+            while (HAL_GetTick() < timeout && SD_SendCmd(cmd, 0));
+            if (HAL_GetTick() < timeout) {
+                ty = 1;
+                SD_SendCmd(CMD16, 512); 
+            }
+        }
     }
     
-    HAL_Delay(4000); // 4 સેકન્ડ માટે સિસ્ટમ થોભાવો જેથી સ્ક્રીન વાંચી શકાય
-    // ----- નવો ડિબગ કોડ પૂરો -----
-
-    if (res_cmd0 == 1) {
-        timeout = HAL_GetTick() + 1000;
+    CardType = ty;
+    SD_CS_HIGH();
+    SPI_TxRx(0xFF);
+    
+    if (ty) {
+        Stat &= ~STA_NOINIT; 
+    } else {
+        Stat |= STA_NOINIT;
+    }
+    
+    return Stat;
 }
 
 DSTATUS SD_disk_status(BYTE pdrv)
