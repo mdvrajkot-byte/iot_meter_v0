@@ -202,11 +202,6 @@ HAL_Delay(200);
   /* USER CODE END 2 */
 
   /* Init scheduler */
-  osKernelInitialize();  
-  
-  /* USER CODE END 2 */
-
-  /* Init scheduler */
   osKernelInitialize();
   /* Create the mutex(es) */
   /* creation of lcdMutex */
@@ -438,7 +433,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -876,63 +871,79 @@ void StartSdTask(void *argument)
   // બોર્ડ ચાલુ થાય એટલે ૨ સેકન્ડ રાહ જુઓ
   osDelay(2000); 
 
-  // ૧. કાર્ડ માઉન્ટ કરો
-  fres = f_mount(&fs, "", 1);
-  
-  if (fres == FR_OK) {
-      
-      // ૨. WRITE 
-      fres = f_open(&fil, "test.txt", FA_WRITE | FA_OPEN_ALWAYS | FA_CREATE_ALWAYS);
-      if (fres == FR_OK) {
-          char myData[] = "SD OK! via RTOS"; 
-          f_write(&fil, myData, strlen(myData), &bytesWrote);
-          f_close(&fil); 
+  /* Infinite loop - Check SD card continuously */
+  for(;;)
+  {
+      // ૧. SD કાર્ડ ડિટેક્ટ ચેક કરો
+      if (HAL_GPIO_ReadPin(mcu_sd_gpio_GPIO_Port, mcu_sd_gpio_Pin) != GPIO_PIN_RESET) {
+          if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+              lcd_clear();
+              lcd_put_cur(0, 0);
+              lcd_send_string("No SD card");
+              lcd_put_cur(1, 0);
+              lcd_send_string("Insert card");
+              osDelay(5000);  // Check again after 5 seconds
+              osMutexRelease(lcdMutexHandle);
+          }
+          continue;
       }
 
-      // ૩. READ 
-      fres = f_open(&fil, "test.txt", FA_READ);
+      // ૨. કાર્ડ માઉન્ટ કરો
+      fres = f_mount(&fs, "", 1);
+      
       if (fres == FR_OK) {
-          f_read(&fil, readBuffer, 16, &bytesRead); 
-          readBuffer[bytesRead] = '\0'; 
-          f_close(&fil);
           
-          // ૪. LCD DISPLAY 
+          // ૩. WRITE 
+          fres = f_open(&fil, "test.txt", FA_WRITE | FA_OPEN_ALWAYS | FA_CREATE_ALWAYS);
+          if (fres == FR_OK) {
+              char myData[] = "SD OK! via RTOS"; 
+              f_write(&fil, myData, strlen(myData), &bytesWrote);
+              f_close(&fil); 
+          }
+
+          // ૪. READ 
+          fres = f_open(&fil, "test.txt", FA_READ);
+          if (fres == FR_OK) {
+              f_read(&fil, readBuffer, 16, &bytesRead); 
+              readBuffer[bytesRead] = '\0'; 
+              f_close(&fil);
+              
+              // ૫. LCD DISPLAY 
+              if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) 
+              {
+                  lcd_clear();
+                  lcd_put_cur(0, 0); 
+                  lcd_send_string("SD OK!");
+                  lcd_put_cur(1, 0); 
+                  lcd_send_string(readBuffer); 
+                  osDelay(2000);  // Check again after 5 seconds
+                  osMutexRelease(lcdMutexHandle); 
+              }
+          }
+          f_mount(NULL, "", 0); 
+          osDelay(10000);  // Check again after 10 seconds
+          
+      } else {
           if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) 
           {
               lcd_clear();
-              lcd_put_cur(0, 0); 
-              lcd_send_string("Read from Task:");
-              lcd_put_cur(1, 0); 
-              lcd_send_string(readBuffer); 
-              osDelay(5000);
-              osMutexRelease(lcdMutexHandle); 
-          }
-      }
-      f_mount(NULL, "", 0); 
-      
-  } else {
-      if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) 
-      {
-          lcd_clear();
-          lcd_put_cur(0, 0);
-          lcd_send_string("SD Mount Error!");
+              lcd_put_cur(0, 0);
+              lcd_send_string("SD Mount Error!");
 
-          char errBuf[16];
-          sprintf(errBuf, "Code: %d", fres); // આ તમને 1, 3 કે 13 જેવો નંબર આપશે
-          lcd_put_cur(1, 0);
-          lcd_send_string(errBuf);          
-          osDelay(5000);
-          osMutexRelease(lcdMutexHandle);
+              char errBuf[16];
+              sprintf(errBuf, "Code: %d", fres);
+              lcd_put_cur(1, 0);
+              lcd_send_string(errBuf);          
+              osDelay(2000);  // Check again after 5 seconds
+              osMutexRelease(lcdMutexHandle);
+          }
+          osDelay(5000);  // Try again after 5 seconds
       }
   }
   
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
   /* USER CODE END StartSdTask */
 }
+
 
 /* USER CODE BEGIN Header_StartBatteryTask */
 /**
@@ -991,7 +1002,7 @@ void StartEspTask(void *argument)
         osMutexRelease(lcdMutexHandle);
 
       }
-      osDelay(2000);
+      osDelay(10000);
   }
   /* USER CODE END StartEspTask */
 }

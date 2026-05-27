@@ -8,7 +8,7 @@
   *git stash
 
   * Copyright (c) 2026 STMicroelectronics.
-  * All rights reservegit pull origin main --rebased.
+  * All rights reserve
   *
   * This software is licensed under terms that can be found in the LICENSE file
   * in the root directory of this software component.

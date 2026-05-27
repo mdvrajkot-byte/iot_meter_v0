@@ -14,12 +14,15 @@ void lcd_write_4bit(uint8_t data)
     HAL_GPIO_WritePin(mcu_lcd_d5_GPIO_Port, mcu_lcd_d5_Pin, (data >> 1) & 0x01);
     HAL_GPIO_WritePin(mcu_lcd_d6_GPIO_Port, mcu_lcd_d6_Pin, (data >> 2) & 0x01);
     HAL_GPIO_WritePin(mcu_lcd_d7_GPIO_Port, mcu_lcd_d7_Pin, (data >> 3) & 0x01);
-for (volatile int i = 0; i < 50; i++);
+    for (volatile int i = 0; i < 50; i++)
+    {
+        
+    }
     LCD_EN_1();
     osDelay(1); 
     LCD_EN_0();
     osDelay(1);
-for (volatile int i = 0; i < 100; i++);
+    for (volatile int i = 0; i < 100; i++);
 }
 
 void lcd_send_cmd(char cmd)
