@@ -5,15 +5,22 @@
 #include "fatfs_sd.h"
 #include <stdio.h>
 #include <string.h>
+#include "cmsis_os.h"
 
 /* External UART for debug logging */
 extern UART_HandleTypeDef huart1;
 
-/* Debug logging function */
-static void debug_log(const char* msg)
-{
-    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 1000);
-    HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, 1000);
+// LCD debug logging function
+#include "lcd.h"
+extern osMutexId_t lcdMutexHandle;
+static void lcd_debug(const char* msg) {
+    if (osMutexAcquire(lcdMutexHandle, 100) == osOK) {
+        lcd_clear();
+        lcd_put_cur(0, 0);
+        lcd_send_string(msg);
+        osDelay(2000); // Show message for 2s
+        osMutexRelease(lcdMutexHandle);
+    }
 }
 
 // =======================================================
@@ -111,81 +118,101 @@ DSTATUS SD_disk_initialize(BYTE pdrv)
 {
     uint8_t n, cmd, ty, ocr[4];
     uint32_t timeout;
-    char buf[64];
+    char buf[17];
     
     if (pdrv != 0) return STA_NOINIT;
     
-    debug_log("[SD] Initialize start");
-    
+    lcd_debug("Step1 OK"); // Init start
     SD_CS_HIGH();
     HAL_Delay(10);
-    
     for (n = 80; n; n--) SPI_TxRx(0xFF);
-    debug_log("[SD] Sent 80 clock cycles");
-    
+    lcd_debug("Step2 OK"); // 80 clocks
     ty = 0;
     n = SD_SendCmd(CMD0, 0);
-    sprintf(buf, "[SD] CMD0 response: 0x%02X", n);
-    debug_log(buf);
-    
-    if (n == 1) {
-        debug_log("[SD] CMD0 OK - Idle state");
+    if (n == 1) 
+    {
+        lcd_debug("Step3 OK"); // CMD0 OK
         timeout = HAL_GetTick() + 1000;
-        
         n = SD_SendCmd(CMD8, 0x1AA);
-        sprintf(buf, "[SD] CMD8 response: 0x%02X", n);
-        debug_log(buf);
-        
-        if (n == 1) {
-            debug_log("[SD] CMD8 OK - SD v2 card detected");
+        if (n == 1) 
+        {
+            lcd_debug("Step4 OK"); // CMD8 OK (SD v2)
             for (n = 0; n < 4; n++) ocr[n] = SPI_TxRx(0xFF);
-            if (ocr[2] == 0x01 && ocr[3] == 0xAA) {
-                debug_log("[SD] Voltage range OK, sending CMD41");
-                while (HAL_GetTick() < timeout && SD_SendCmd(CMD41, 1UL << 30));
-                if (HAL_GetTick() < timeout) {
+            if (ocr[2] == 0x01 && ocr[3] == 0xAA) 
+            {
+                lcd_debug("Step5 wait"); // Voltage OK
+                while (HAL_GetTick() < timeout) 
+                {
+                    SD_SendCmd(CMD55, 0); 
+                    SPI_TxRx(0xFF); // 🔴 કાર્ડને પ્રોસેસ કરવા માટે Dummy clock
+                    
+                    if (SD_SendCmd(CMD41, 1UL << 30) == 0)
+                    {
+                        lcd_debug("Step5 ok"); // નવો મેસેજ                            
+                        break; // કાર્ડ 100% Ready થઈ ગયું (જવાબ 0 આવ્યો)!
+                    }
+                    SPI_TxRx(0xFF); // 🔴 ફરીથી Dummy clock
+                    HAL_Delay(10);  // કાર્ડને થોડો સમય આપો
+                }
+                
+                if (HAL_GetTick() < timeout) 
+                {
                     n = SD_SendCmd(CMD58, 0);
-                    sprintf(buf, "[SD] CMD58 response: 0x%02X", n);
-                    debug_log(buf);
-                    if (n == 0) {
+                    if (n == 0) 
+                    {
                         for (n = 0; n < 4; n++) ocr[n] = SPI_TxRx(0xFF);
                         ty = (ocr[0] & 0x40) ? 3 : 2;
-                        sprintf(buf, "[SD] Card type: %d", ty);
-                        debug_log(buf);
+                        lcd_debug("Step6 OK"); // Card type OK
+                    } 
+                    else 
+                    {
+                        lcd_debug("Step6 ERR"); // CMD58 fail
                     }
-                } else {
-                    debug_log("[SD] CMD41 timeout");
+                } 
+                else 
+                {
+                    lcd_debug("Step5 ERR"); // CMD41 timeout
                 }
-            } else {
-                debug_log("[SD] Voltage range mismatch");
+            } 
+            else 
+            {
+                lcd_debug("Step5 ERR"); // Voltage mismatch
             }
-        } else {
-            debug_log("[SD] CMD8 failed - SD v1 card, trying CMD1");
+        } 
+        else 
+        {
+            lcd_debug("Step4 ERR"); // CMD8 fail
             cmd = (SD_SendCmd(CMD55, 0) <= 1 && SD_SendCmd(CMD41, 0) <= 1) ? CMD41 : CMD1;
             while (HAL_GetTick() < timeout && SD_SendCmd(cmd, 0));
-            if (HAL_GetTick() < timeout) {
+            if (HAL_GetTick() < timeout) 
+            {
                 ty = 1;
                 SD_SendCmd(CMD16, 512);
-                debug_log("[SD] SD v1 card initialized");
-            } else {
-                debug_log("[SD] CMD1/CMD41 timeout");
+                lcd_debug("Step5b OK"); // SD v1 OK
+            }
+            else
+            {
+                lcd_debug("Step5b ERR"); // CMD1/41 timeout
             }
         }
-    } else {
-        debug_log("[SD] CMD0 failed!");
     }
-    
+    else 
+    {
+        lcd_debug("Step3 ERR"); // CMD0 fail
+    }
     CardType = ty;
     SD_CS_HIGH();
     SPI_TxRx(0xFF);
-    
-    if (ty) {
+    if (ty)
+    {
         Stat &= ~STA_NOINIT;
-        debug_log("[SD] Init SUCCESS");
-    } else {
+        lcd_debug("Step7 OK"); // SD Init OK
+    } 
+    else
+    {
         Stat |= STA_NOINIT;
-        debug_log("[SD] Init FAILED");
+        lcd_debug("Step7 ERR"); // SD Init FAIL
     }
-    
     return Stat;
 }
 
@@ -200,12 +227,10 @@ DRESULT SD_disk_read(BYTE pdrv, BYTE* buff, DWORD sector, UINT count)
     char buf[64];
     if (pdrv != 0 || !count) return RES_PARERR;
     if (Stat & STA_NOINIT) {
-        debug_log("[SD] Read: Disk not initialized");
         return RES_NOTRDY;
     }
     
     sprintf(buf, "[SD] Read sector %lu, count %d", sector, count);
-    debug_log(buf);
     
     if (!(CardType & 2)) sector *= 512; 
     
@@ -221,15 +246,11 @@ DRESULT SD_disk_read(BYTE pdrv, BYTE* buff, DWORD sector, UINT count)
                     SPI_TxRx(0xFF); 
                     SPI_TxRx(0xFF);
                     count = 0;
-                    debug_log("[SD] Read OK");
                 } else {
-                    debug_log("[SD] Read timeout - no data token");
                 }
             } else {
-                debug_log("[SD] Read: Card not ready");
             }
         } else {
-            debug_log("[SD] Read: CMD17 failed");
         }
     }
     
@@ -243,16 +264,14 @@ DRESULT SD_disk_write(BYTE pdrv, const BYTE* buff, DWORD sector, UINT count)
     char buf[64];
     if (pdrv != 0 || !count) return RES_PARERR;
     if (Stat & STA_NOINIT) {
-        debug_log("[SD] Write: Disk not initialized");
         return RES_NOTRDY;
     }
     if (Stat & STA_PROTECT) {
-        debug_log("[SD] Write: Disk is write protected");
+        lcd_debug("Step8 ERR"); // Disk is write protected
         return RES_WRPRT;
     }
     
     sprintf(buf, "[SD] Write sector %lu, count %d", sector, count);
-    debug_log(buf);
     
     if (!(CardType & 2)) sector *= 512;
     
@@ -270,12 +289,12 @@ DRESULT SD_disk_write(BYTE pdrv, const BYTE* buff, DWORD sector, UINT count)
             if ((SPI_TxRx(0xFF) & 0x1F) == 0x05) { 
                 SD_ReadyWait(); 
                 count = 0;
-                debug_log("[SD] Write OK");
+                lcd_debug("Step8b OK"); // Write OK
             } else {
-                debug_log("[SD] Write: Bad response token");
+                lcd_debug("Step8b ERR"); // Bad response token
             }
         } else {
-            debug_log("[SD] Write: CMD24 failed");
+            lcd_debug("Step8b ERR"); // CMD24 failed
         }
     }
     

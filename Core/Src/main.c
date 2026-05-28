@@ -166,7 +166,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+   HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -176,7 +176,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-HAL_Delay(200);
+  HAL_Delay(2000);
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -433,7 +433,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_128;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -875,30 +875,108 @@ void StartSdTask(void *argument)
   for(;;)
   {
       // ૧. SD કાર્ડ ડિટેક્ટ ચેક કરો
-      if (HAL_GPIO_ReadPin(mcu_sd_gpio_GPIO_Port, mcu_sd_gpio_Pin) != GPIO_PIN_RESET) {
+      if (HAL_GPIO_ReadPin(mcu_sd_gpio_GPIO_Port, mcu_sd_gpio_Pin) != GPIO_PIN_RESET) 
+      {
           if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
               lcd_clear();
               lcd_put_cur(0, 0);
               lcd_send_string("No SD card");
               lcd_put_cur(1, 0);
               lcd_send_string("Insert card");
-              osDelay(5000);  // Check again after 5 seconds
+              osDelay(2000);  // Check again after 5 seconds
               osMutexRelease(lcdMutexHandle);
           }
           continue;
       }
+      else
+      {
+          if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) 
+          {
+              lcd_clear();
+              lcd_put_cur(0, 0);
+              lcd_send_string("SD card detected");
+              osDelay(2000);  // Check again after 2 seconds
+              osMutexRelease(lcdMutexHandle);
+          }
+      }
+
+/* =================================================== */
+      /* 🔴 CUSTOM SPI RAW TEST (FatFs ને બાયપાસ કરવા માટે) 🔴 */
+      /* =================================================== */
+      
+      uint8_t dummy[10] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+      uint8_t cmd0[6] = {0x40, 0x00, 0x00, 0x00, 0x00, 0x95}; // Wake-up Command
+      uint8_t response = 0xFF;
+
+      // ૧. CS પિનને HIGH કરો (તમારા સ્કેમેટિક પ્રમાણે)
+      HAL_GPIO_WritePin(mcu_sd_cs_GPIO_Port, mcu_sd_cs_Pin, GPIO_PIN_SET);
+      osDelay(10); // RTOS delay
+
+      // ૨. 74+ ક્લોક પલ્સ જનરેટ કરો
+      HAL_SPI_Transmit(&hspi2, dummy, 10, 100);  // નોંધ: જો તમારી SPI અલગ હોય તો hspi1 બદલજો
+
+      // ૩. CS પિનને LOW કરો (કાર્ડ સિલેક્ટ કરો)
+      HAL_GPIO_WritePin(mcu_sd_cs_GPIO_Port, mcu_sd_cs_Pin, GPIO_PIN_RESET);
+
+      // ૪. CMD0 મોકલો
+      HAL_SPI_Transmit(&hspi2, cmd0, 6, 100);
+
+      // ૫. જવાબ વાંચો (10 વખત પ્રયાસ)
+      for(int i = 0; i < 10; i++) {
+          uint8_t rx_byte = 0xFF;
+          HAL_SPI_TransmitReceive(&hspi2, &rx_byte, &response, 1, 10);
+          if(response != 0xFF) break;
+      }
+
+      // ૬. CS પિનને ફરી HIGH કરો
+      HAL_GPIO_WritePin(mcu_sd_cs_GPIO_Port, mcu_sd_cs_Pin, GPIO_PIN_SET);
+
+      // ૭. LCD પર રિઝલ્ટ જુઓ
+      if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+          lcd_clear();
+          lcd_put_cur(0, 0);
+          if(response == 0x01) {
+              lcd_send_string("SPI TEST PASS!"); // 🟢 હાર્ડવેર 100% OK!
+          } else {
+              lcd_send_string("SPI TEST FAIL!"); // 🔴 વાયરિંગ કે સ્પીડમાં હજુ ભૂલ છે
+              char errBuf[16];
+              sprintf(errBuf, "Res: 0x%02X", response);
+              lcd_put_cur(1, 0);
+              lcd_send_string(errBuf); 
+          }
+          osDelay(3000);
+          osMutexRelease(lcdMutexHandle);
+      }
+      /* =================================================== */
 
       // ૨. કાર્ડ માઉન્ટ કરો
       fres = f_mount(&fs, "", 1);
       
-      if (fres == FR_OK) {
-          
+      if (fres == FR_OK) 
+      {
           // ૩. WRITE 
           fres = f_open(&fil, "test.txt", FA_WRITE | FA_OPEN_ALWAYS | FA_CREATE_ALWAYS);
-          if (fres == FR_OK) {
+          if (fres == FR_OK) 
+          {
               char myData[] = "SD OK! via RTOS"; 
               f_write(&fil, myData, strlen(myData), &bytesWrote);
               f_close(&fil); 
+          }
+          else
+          {
+              if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) 
+              {
+                  lcd_clear();
+                  lcd_put_cur(0, 0);
+                  lcd_send_string("File Write Error!");
+
+                  char errBuf[16];
+                  sprintf(errBuf, "Code: %d", fres);
+                  lcd_put_cur(1, 0);
+                  lcd_send_string(errBuf);          
+                  osDelay(2000);  // Check again after 5 seconds
+                  osMutexRelease(lcdMutexHandle);
+              }
           }
 
           // ૪. READ 
@@ -923,7 +1001,9 @@ void StartSdTask(void *argument)
           f_mount(NULL, "", 0); 
           osDelay(10000);  // Check again after 10 seconds
           
-      } else {
+      }
+      else
+      {
           if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) 
           {
               lcd_clear();
@@ -943,7 +1023,6 @@ void StartSdTask(void *argument)
   
   /* USER CODE END StartSdTask */
 }
-
 
 /* USER CODE BEGIN Header_StartBatteryTask */
 /**
