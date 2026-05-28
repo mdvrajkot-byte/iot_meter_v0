@@ -922,7 +922,8 @@ void StartSdTask(void *argument)
       HAL_SPI_Transmit(&hspi2, cmd0, 6, 100);
 
       // ૫. જવાબ વાંચો (10 વખત પ્રયાસ)
-      for(int i = 0; i < 10; i++) {
+      for(int i = 0; i < 10; i++)
+      {
           uint8_t rx_byte = 0xFF;
           HAL_SPI_TransmitReceive(&hspi2, &rx_byte, &response, 1, 10);
           if(response != 0xFF) break;
