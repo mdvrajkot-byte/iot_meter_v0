@@ -119,128 +119,76 @@ DSTATUS SD_disk_initialize(BYTE pdrv)
 {
     uint8_t n, cmd, ty, ocr[4];
     uint32_t timeout;
-    
-    // 🔴 ડીપ-ડાઈવ અને પોલિંગ માટેના ચલો 
-    uint8_t res55 = 0xFF;
     uint8_t res41 = 0xFF;
-    uint32_t retry_count = 0;
-    
+
     if (pdrv != 0) return STA_NOINIT;
-    
-    lcd_debug("Step1 OK"); // Init start
+
+    // 🔴 LCD પર પ્રોગ્રેસ બતાવો
+    lcd_clear();
+    lcd_put_cur(0,0); lcd_send_string("SD Init: Start");
+
     SD_CS_HIGH();
     HAL_Delay(10);
-    
-    // 80 ડમી ક્લોક પલ્સ (SD કાર્ડને જગાડવા માટે)
     for (n = 80; n; n--) SPI_TxRx(0xFF);
-    lcd_debug("Step2 OK"); 
-    
-    ty = 0;
-    n = SD_SendCmd(CMD0, 0); // Reset Command
-    
+
+    n = SD_SendCmd(CMD0, 0);
     if (n == 1) 
     {
-        lcd_debug("Step3 OK"); // CMD0 OK
-        
-        n = SD_SendCmd(CMD8, 0x1AA); // Voltage Check
+        n = SD_SendCmd(CMD8, 0x1AA);
         if (n == 1) 
         {
-            lcd_debug("Step4 OK"); // CMD8 OK (SD v2 Card)
             for (n = 0; n < 4; n++) ocr[n] = SPI_TxRx(0xFF);
             
             if (ocr[2] == 0x01 && ocr[3] == 0xAA) 
             {
-                lcd_debug("Step5 WAIT"); 
-
-                // 🔴 1. ટાઈમઆઉટ અહીથી જ શરૂ થશે (Fresh 3 Seconds)
-                timeout = HAL_GetTick() + 3000;
-                
-                // 🔴 2. ફાસ્ટ હાર્ડવેર પોલિંગ લૂપ (આમાં કોઈ LCD પ્રિન્ટ કે મોટો Delay નહિ આવે)
+                timeout = HAL_GetTick() + 3000;                
                 while (HAL_GetTick() < timeout)
                 {
-                    res55 = SD_SendCmd(CMD55, 0); 
+                    SD_SendCmd(CMD55, 0); 
                     SPI_TxRx(0xFF); 
-                    
                     res41 = SD_SendCmd(CMD41, 1UL << 30);
                     SPI_TxRx(0xFF); 
-                    
-                    if (res41 == 0x00) {
-                        break; // કાર્ડ 100% Ready થઈ ગયું (0 આવી ગયો)!
-                    }
-                    
-                    retry_count++;
-                    HAL_Delay(10); // માત્ર 10 ms ની હાર્ડવેર રાહ
+                    if (res41 == 0x00) break;
+                    HAL_Delay(10);
                 }
                 
-                // 🔴 3. ટાઈમઆઉટને બદલે સીધું જ રિઝલ્ટ (res41) ચેક કરો
                 if (res41 == 0x00) 
                 {
-                    // કાર્ડ ચાલુ થઈ ગયું છે, હવે તેની કેપેસિટી (SDHC/SDXC) ચેક કરો
                     n = SD_SendCmd(CMD58, 0);
-                    if (n == 0) 
-                    {
+                    if (n == 0) {
                         for (n = 0; n < 4; n++) ocr[n] = SPI_TxRx(0xFF);
                         ty = (ocr[0] & 0x40) ? 3 : 2;
-                        lcd_debug("Step6 OK"); // Card type OK
-                    } 
-                    else 
-                    {
-                        lcd_debug("Step6 ERR"); // CMD58 fail
                     }
-                } 
-                else 
-                {
-                    // જો 3 સેકન્ડ પછી પણ 0 ના આવે, તો જ એરર આપો
-                    lcd_debug("Step56 ERR"); 
+                } else {
+                    lcd_put_cur(1,0); lcd_send_string("Init Timeout ");
                 }
-            } 
-            else 
-            {
-                lcd_debug("Step55 ERR"); // Voltage mismatch
+            } else {
+                lcd_put_cur(1,0); lcd_send_string("Volt ERR     ");
             }
-        } 
-        else 
-        {
-            lcd_debug("Step4 ERR"); // CMD8 fail (For older SD v1 cards)
-            
+        } else {
+            lcd_put_cur(1,0); lcd_send_string("CMD8 ERR     ");
+            // જૂના v1 કાર્ડ માટેનું લોજિક...
             timeout = HAL_GetTick() + 3000;
             cmd = (SD_SendCmd(CMD55, 0) <= 1 && SD_SendCmd(CMD41, 0) <= 1) ? CMD41 : CMD1;
             while (HAL_GetTick() < timeout && SD_SendCmd(cmd, 0));
-            if (HAL_GetTick() < timeout) 
-            {
-                ty = 1;
-                SD_SendCmd(CMD16, 512);
-                lcd_debug("Step5b OK"); // SD v1 OK
-            }
-            else
-            {
-                lcd_debug("Step5b ERR"); // CMD1/41 timeout
-            }
+            if (HAL_GetTick() < timeout) ty = 1;
         }
     }
-    else 
-    {
-        lcd_debug("Step3 ERR"); // CMD0 fail
-    }
     
-    // પ્રક્રિયા પૂરી થયા પછી કાર્ડને ડી-સિલેક્ટ કરો
     CardType = ty;
     SD_CS_HIGH();
     SPI_TxRx(0xFF);
     
-    // ફાઇનલ સ્ટેટસ અપડેટ
-    if (ty)
-    {
+    if (ty) {
         Stat &= ~STA_NOINIT;
-        lcd_debug("Step7 OK"); // 🟢 બધું જ સફળ!
-    } 
-    else
-    {
+        lcd_put_cur(1,0); lcd_send_string("SD INIT SUCCESS!");
+        HAL_Delay(1000);
+        return 0; 
+    } else {
         Stat |= STA_NOINIT;
-        lcd_debug("Step7 ERR"); // 🔴 ફેલ!
+        lcd_put_cur(1,0); lcd_send_string("SD INIT FAILED!");
+        return STA_NOINIT;
     }
-    
-    return Stat;
 }
 
 DSTATUS SD_disk_status(BYTE pdrv)
@@ -296,10 +244,7 @@ DRESULT SD_disk_write(BYTE pdrv, const BYTE* buff, DWORD sector, UINT count)
     if (Stat & STA_PROTECT) {
         lcd_debug("Step8 ERR"); // Disk is write protected
         return RES_WRPRT;
-    }
-    
-    sprintf(buf, "[SD] Write sector %lu, count %d", sector, count);
-    
+    }    
     if (!(CardType & 2)) sector *= 512;
     
     if (count == 1) {
@@ -316,15 +261,8 @@ DRESULT SD_disk_write(BYTE pdrv, const BYTE* buff, DWORD sector, UINT count)
             if ((SPI_TxRx(0xFF) & 0x1F) == 0x05) { 
                 SD_ReadyWait(); 
                 count = 0;
-                lcd_debug("Step8b OK"); // Write OK
-            } else {
-                lcd_debug("Step8b ERR"); // Bad response token
-            }
-        } else {
-            lcd_debug("Step8b ERR"); // CMD24 failed
         }
     }
-    
     SD_CS_HIGH();
     SPI_TxRx(0xFF);
     return count ? RES_ERROR : RES_OK;
