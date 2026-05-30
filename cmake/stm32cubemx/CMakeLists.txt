@@ -38,7 +38,9 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../startup_stm32g070xx.s
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/fatfs_sd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/lcd.c    
-)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/quectel_ec200.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/lwrb.c
+    )
 
 # STM32 HAL/LL Drivers
 set(STM32_Drivers_Src
@@ -61,6 +63,7 @@ set(STM32_Drivers_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_cortex.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_exti.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_i2s.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_rtc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_rtc_ex.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_spi.c

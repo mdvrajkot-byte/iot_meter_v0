@@ -115,8 +115,6 @@ void Error_Handler(void);
 #define mcu_lcd_d5_GPIO_Port GPIOB
 #define mcu_lcd_d6_Pin GPIO_PIN_4
 #define mcu_lcd_d6_GPIO_Port GPIOB
-#define mcu_led_battery_Pin GPIO_PIN_5
-#define mcu_led_battery_GPIO_Port GPIOB
 #define mcu_lcd_d7_Pin GPIO_PIN_6
 #define mcu_lcd_d7_GPIO_Port GPIOB
 #define mcu_lcd_led_Pin GPIO_PIN_7

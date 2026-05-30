@@ -123,7 +123,6 @@ DSTATUS SD_disk_initialize(BYTE pdrv)
 
     if (pdrv != 0) return STA_NOINIT;
 
-    // 🔴 LCD પર પ્રોગ્રેસ બતાવો
     lcd_clear();
     lcd_put_cur(0,0); lcd_send_string("SD Init: Start");
 
@@ -234,37 +233,73 @@ DRESULT SD_disk_read(BYTE pdrv, BYTE* buff, DWORD sector, UINT count)
     return count ? RES_ERROR : RES_OK;
 }
 
+
 DRESULT SD_disk_write(BYTE pdrv, const BYTE* buff, DWORD sector, UINT count)
 {
-    char buf[64];
+    // 🔴 1. પેલો નકામો 'buf' વેરીએબલ કાઢી નાખ્યો છે (Warning સોલ્વ).
+
     if (pdrv != 0 || !count) return RES_PARERR;
-    if (Stat & STA_NOINIT) {
-        return RES_NOTRDY;
-    }
-    if (Stat & STA_PROTECT) {
-        lcd_debug("Step8 ERR"); // Disk is write protected
-        return RES_WRPRT;
+    if (Stat & STA_NOINIT) return RES_NOTRDY;
+    if (Stat & STA_PROTECT)
+    {
+        return RES_WRPRT; // ડિસ્ક રાઈટ-પ્રોટેક્ટેડ છે
     }    
+
+    // જૂના કાર્ડ (v1) માટે બાઈટ એડ્રેસિંગ
     if (!(CardType & 2)) sector *= 512;
     
-    if (count == 1) {
-        if (SD_SendCmd(CMD24, sector) == 0) {
+    // 🔴 2. જો માત્ર 1 સેક્ટર લખવો હોય (Single Block - CMD24)
+    if (count == 1)
+    {
+        if (SD_SendCmd(CMD24, sector) == 0)
+        {
             SD_CS_LOW();
-            HAL_Delay(2);
             SPI_TxRx(0xFF);
-            SPI_TxRx(0xFE); 
-            HAL_SPI_Transmit(HSPI_SDCARD, (BYTE*)buff, 512, 500);
-            SPI_TxRx(0xFF); 
-            SPI_TxRx(0xFF);
-            HAL_Delay(1);
+            SPI_TxRx(0xFE); // Data Token (Single Block)
             
-            if ((SPI_TxRx(0xFF) & 0x1F) == 0x05) { 
-                SD_ReadyWait(); 
-                count = 0;
+            HAL_SPI_Transmit(HSPI_SDCARD, (uint8_t*)buff, 512, 1000); // 512 બાઈટ્સ લખો
+            
+            SPI_TxRx(0xFF); // Dummy CRC
+            SPI_TxRx(0xFF); // Dummy CRC
+            
+            // કાર્ડનો જવાબ ચેક કરો
+            if ((SPI_TxRx(0xFF) & 0x1F) == 0x05)
+            { 
+                SD_ReadyWait(); // કાર્ડ ઇન્ટરનલ મેમરીમાં લખે ત્યાં સુધી રાહ જુઓ
+                count = 0; // 🟢 સક્સેસ!
+            } 
         }
     }
+    // 🔴 3. જો 1 કરતા વધારે સેક્ટર એકસાથે લખવા હોય (Multi Block - CMD25)
+    else 
+    {
+        if (SD_SendCmd(CMD25, sector) == 0)
+        {
+            SD_CS_LOW();
+            SPI_TxRx(0xFF);
+            
+            do {
+                SPI_TxRx(0xFC); // Data Token (Multi Block માટે 0xFC આવે)
+                
+                HAL_SPI_Transmit(HSPI_SDCARD, (uint8_t*)buff, 512, 1000);
+                
+                SPI_TxRx(0xFF); // Dummy CRC
+                SPI_TxRx(0xFF); // Dummy CRC
+                
+                if ((SPI_TxRx(0xFF) & 0x1F) != 0x05) break; // જો એરર આવે તો લૂપ તોડો
+                
+                SD_ReadyWait(); // રાહ જુઓ
+                buff += 512; // પોઇન્ટરને આગળ વધારો
+            } while (--count); // જ્યાં સુધી બધા બ્લોક ન લખાય ત્યાં સુધી ફરો
+            
+            SPI_TxRx(0xFD); // Stop Tran Token (કાર્ડને કહો કે ડેટા પૂરો થયો)
+            SD_ReadyWait();
+        }
+    }
+
     SD_CS_HIGH();
     SPI_TxRx(0xFF);
+    
     return count ? RES_ERROR : RES_OK;
 }
 

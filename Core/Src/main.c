@@ -26,6 +26,7 @@
 #include "lcd.h"     // હવે આ લાઈન ક્યારેય ગાયબ નહિ થાય!
 #include <string.h>
 #include <stdio.h>  
+#include "quectel_ec200.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,6 +52,8 @@ typedef struct {
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 
+I2S_HandleTypeDef hi2s1;
+
 RTC_HandleTypeDef hrtc;
 
 SPI_HandleTypeDef hspi2;
@@ -58,6 +61,7 @@ SPI_HandleTypeDef hspi2;
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart2_rx;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -123,17 +127,20 @@ const osMutexAttr_t lcdMutex_attributes = {
 /* USER CODE BEGIN PV */
 MeterData_t myMeter = {0};
 extern osMutexId_t lcdMutexHandle;
+Quectel_Handle_t MyModem; // 🔴 આ આપણું માસ્ટર મોડેમ હેન્ડલ છે
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_RTC_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_I2S1_Init(void);
 void StartDefaultTask(void *argument);
 void StartGsmTask(void *argument);
 void StartLcdTask(void *argument);
@@ -166,7 +173,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-   HAL_Init();
+  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -181,6 +188,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_ADC1_Init();
   MX_RTC_Init();
   MX_SPI2_Init();
@@ -190,6 +198,7 @@ int main(void)
   if (MX_FATFS_Init() != APP_OK) {
     Error_Handler();
   }
+  MX_I2S1_Init();
   /* USER CODE BEGIN 2 */
   
   HAL_GPIO_WritePin(mcu_charge_GPIO_Port, mcu_charge_Pin, GPIO_PIN_SET);
@@ -198,7 +207,8 @@ int main(void)
   
   HAL_GPIO_WritePin(mcu_charge_GPIO_Port, mcu_charge_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(mcu_lcd_led_GPIO_Port, mcu_lcd_led_Pin, GPIO_PIN_SET);
-  
+
+  Quectel_Init(&MyModem, &huart2);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -370,6 +380,38 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief I2S1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2S1_Init(void)
+{
+
+  /* USER CODE BEGIN I2S1_Init 0 */
+
+  /* USER CODE END I2S1_Init 0 */
+
+  /* USER CODE BEGIN I2S1_Init 1 */
+
+  /* USER CODE END I2S1_Init 1 */
+  hi2s1.Instance = SPI1;
+  hi2s1.Init.Mode = I2S_MODE_SLAVE_TX;
+  hi2s1.Init.Standard = I2S_STANDARD_PHILIPS;
+  hi2s1.Init.DataFormat = I2S_DATAFORMAT_16B;
+  hi2s1.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
+  hi2s1.Init.AudioFreq = I2S_AUDIOFREQ_8K;
+  hi2s1.Init.CPOL = I2S_CPOL_LOW;
+  if (HAL_I2S_Init(&hi2s1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2S1_Init 2 */
+
+  /* USER CODE END I2S1_Init 2 */
 
 }
 
@@ -583,6 +625,22 @@ static void MX_USART3_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 3, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -608,8 +666,8 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, mcu_uart_gpio_Pin|mcu_led_modbus_Pin|mcu_charge_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, mcu_gsm_status_Pin|mcu_led_wifi_Pin|mcu_sd_cs_Pin|mcu_lcd_d5_Pin
-                          |mcu_lcd_d6_Pin|mcu_led_battery_Pin|mcu_lcd_d7_Pin|mcu_lcd_led_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, mcu_gsm_pwr_Pin|mcu_gsm_status_Pin|mcu_led_wifi_Pin|mcu_sd_cs_Pin
+                          |mcu_lcd_d5_Pin|mcu_lcd_d6_Pin|mcu_lcd_d7_Pin|mcu_lcd_led_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, mcu_led_gsm_Pin|mcu_lcd_rs_Pin|mcu_lcd_en_Pin|mcu_lcd_d4_Pin, GPIO_PIN_RESET);
@@ -640,16 +698,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(mcu_gsm_wakeup_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : mcu_gsm_pwr_Pin */
-  GPIO_InitStruct.Pin = mcu_gsm_pwr_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(mcu_gsm_pwr_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : mcu_gsm_status_Pin mcu_led_wifi_Pin mcu_sd_cs_Pin mcu_lcd_d5_Pin
-                           mcu_lcd_d6_Pin mcu_led_battery_Pin mcu_lcd_d7_Pin mcu_lcd_led_Pin */
-  GPIO_InitStruct.Pin = mcu_gsm_status_Pin|mcu_led_wifi_Pin|mcu_sd_cs_Pin|mcu_lcd_d5_Pin
-                          |mcu_lcd_d6_Pin|mcu_led_battery_Pin|mcu_lcd_d7_Pin|mcu_lcd_led_Pin;
+  /*Configure GPIO pins : mcu_gsm_pwr_Pin mcu_gsm_status_Pin mcu_led_wifi_Pin mcu_sd_cs_Pin
+                           mcu_lcd_d5_Pin mcu_lcd_d6_Pin mcu_lcd_d7_Pin mcu_lcd_led_Pin */
+  GPIO_InitStruct.Pin = mcu_gsm_pwr_Pin|mcu_gsm_status_Pin|mcu_led_wifi_Pin|mcu_sd_cs_Pin
+                          |mcu_lcd_d5_Pin|mcu_lcd_d6_Pin|mcu_lcd_d7_Pin|mcu_lcd_led_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -680,7 +732,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+{
+    // જો ડેટા huart2 (મોડેમ) માંથી આવ્યો હોય, તો આપણી લાઇબ્રેરીને આપો
+    if (huart->Instance == USART2) 
+    {
+        Quectel_UART_RxCpltCallback(&MyModem, Size);
+    }
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -708,23 +767,59 @@ void StartDefaultTask(void *argument)
 * @retval None
 */
 /* USER CODE END Header_StartGsmTask */
+
 void StartGsmTask(void *argument)
 {
   /* USER CODE BEGIN StartGsmTask */
-  osDelay(1000);
-  
-  // STEP 1: GSM ને ચાલુ કરવા માટે PWRKEY (PB0) ને HIGH કરો
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET); 
-  osDelay(1500); 
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-  
-  // મોડ્યુલને બુટ થવાનો સમય આપો
-  osDelay(3000);
+  osDelay(2000); 
+  uint8_t fail_count = 0; // ફેલ થવાનું કાઉન્ટર
   
   /* Infinite loop */
   for(;;)
-  { 
-    osDelay(1);
+  {
+
+    // કમાન્ડ મોકલો
+    if (Quectel_Send_AT_Command(&MyModem, "AT\r\n", "OK", 1000) == GSM_OK) 
+    {
+        fail_count = 0; // જો OK આવે તો કાઉન્ટર ઝીરો કરી દો
+        
+        if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+            lcd_clear();
+            lcd_put_cur(0, 0);
+            lcd_send_string("Modem OK");
+            osMutexRelease(lcdMutexHandle);
+        }
+    } 
+    else 
+    {
+        fail_count++; // જો ફેલ થાય તો કાઉન્ટર વધારો
+        
+        if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+            lcd_clear();
+            lcd_put_cur(0, 0);
+            lcd_send_string("Modem Fail");
+            osMutexRelease(lcdMutexHandle);
+        }
+
+        // 🔴 AUTO-RECOVERY: જો સળંગ 3 વાર ફેલ જાય, તો મોડેમને રીબૂટ કરો!
+        if (fail_count >= 3) 
+        {
+            if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                lcd_put_cur(1, 0); lcd_send_string("Re-Booting...");
+                osMutexRelease(lcdMutexHandle);
+            }
+            
+            // 2.1 સેકન્ડનો બૂટ પલ્સ
+            HAL_GPIO_WritePin(mcu_gsm_pwr_GPIO_Port, mcu_gsm_pwr_Pin, GPIO_PIN_SET); 
+            osDelay(2100); 
+            HAL_GPIO_WritePin(mcu_gsm_pwr_GPIO_Port, mcu_gsm_pwr_Pin, GPIO_PIN_RESET);
+
+            osDelay(10000); // બુટ થવાનો સમય આપો
+            fail_count = 0; // રીબૂટ કર્યા પછી કાઉન્ટર પાછું ઝીરો કરો
+        }
+    }
+    
+    osDelay(2000); // 2 સેકન્ડનો વિરામ
   }
   /* USER CODE END StartGsmTask */
 }
@@ -808,16 +903,12 @@ void StartLedTask(void *argument)
     {
         if (battery_timer >= 10000)
         {
-            HAL_GPIO_WritePin(mcu_led_battery_GPIO_Port, mcu_led_battery_Pin, GPIO_PIN_RESET); // ON
-            osDelay(100); // નાનો ઝબકારો
-            HAL_GPIO_WritePin(mcu_led_battery_GPIO_Port, mcu_led_battery_Pin, GPIO_PIN_SET);   // OFF
 
             battery_timer = 0; // ટાઈમર રીસેટ
         }
     }
     else
     {
-        HAL_GPIO_WritePin(mcu_led_battery_GPIO_Port, mcu_led_battery_Pin, GPIO_PIN_SET); // OFF
         battery_timer = 0;
     }    
     osDelay(1000);
@@ -853,14 +944,13 @@ void StartModbusTask(void *argument)
 /* USER CODE END Header_StartSdTask */
 void StartSdTask(void *argument)
 {
+  /* USER CODE BEGIN StartSdTask */
   FATFS fs;
   FIL fil;
   FRESULT fres;
   UINT bytesWrote;
   uint8_t is_mounted = 0; // કાર્ડ માઉન્ટ થયેલ છે કે નહીં તે જાણવા માટે
-
-  osDelay(2000); 
-
+  /* Infinite loop */
   for(;;)
   {
       // ૧. SD કાર્ડ ફિઝિકલ ડિટેક્શન
@@ -889,7 +979,6 @@ void StartSdTask(void *argument)
               continue;
           }
       }
-
       // ૩. ફાઈલ ઓપરેશન
       fres = f_open(&fil, "test.txt", FA_WRITE | FA_OPEN_ALWAYS | FA_OPEN_APPEND);
       if (fres == FR_OK) 
@@ -899,10 +988,12 @@ void StartSdTask(void *argument)
           f_close(&fil); 
           osDelay(3000); // દર ૧૦ સેકન્ડે ડેટા લખો
       }
-      
       osDelay(10000); // દર ૧૦ સેકન્ડે ડેટા લખો
   }
+  osDelay(2000);
+  /* USER CODE END StartSdTask */
 }
+
 /* USER CODE BEGIN Header_StartBatteryTask */
 /**
 * @brief Function implementing the Battery_Task thread.
@@ -937,7 +1028,6 @@ void StartEspTask(void *argument)
   for(;;)
   {
       memset(rx_buffer, 0, sizeof(rx_buffer));
-
       HAL_UART_Transmit(&huart3, (uint8_t*)at_command, strlen(at_command), 100);
       HAL_StatusTypeDef status = HAL_UART_Receive(&huart3, rx_buffer, 5, 1000);
       osDelay(10000);
