@@ -37,6 +37,14 @@ typedef struct {
     int gsm_communication_on;       // 1 = ચાલુ, 0 = બંધ
     int battery_healthy;
 } MeterData_t;
+
+typedef enum {
+    GSM_STATE_SYNC,
+    GSM_STATE_SIM,
+    GSM_STATE_SIGNAL,
+    GSM_STATE_NETWORK,
+    GSM_STATE_READY
+} GsmState_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -128,6 +136,10 @@ const osMutexAttr_t lcdMutex_attributes = {
 MeterData_t myMeter = {0};
 extern osMutexId_t lcdMutexHandle;
 Quectel_Handle_t MyModem; // 🔴 આ આપણું માસ્ટર મોડેમ હેન્ડલ છે
+uint32_t DBG_RxCount = 0;       // કેટલી વાર ડેટા આવ્યો?
+uint32_t DBG_ErrCount = 0;      // કેટલી વાર એરર આવી?
+uint32_t DBG_LastErrorCode = 0; // છેલ્લી એરર કઈ હતી?
+char DBG_LastData[50] = {0};    // છેલ્લે ખરેખર શું ડેટા આવ્યો હતો?
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -732,6 +744,8 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/*
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
     // જો ડેટા huart2 (મોડેમ) માંથી આવ્યો હોય, તો આપણી લાઇબ્રેરીને આપો
@@ -740,6 +754,28 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
         Quectel_UART_RxCpltCallback(&MyModem, Size);
     }
 }
+*/
+
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+{
+    if (huart->Instance == USART2) 
+    {
+        DBG_RxCount++; // કાઉન્ટર વધારો
+
+        // ડીબગીંગ માટે આવેલો ડેટા આપણા ગ્લોબલ એરેમાં કોપી કરો
+        memset(DBG_LastData, 0, sizeof(DBG_LastData)); // જૂનો કચરો સાફ
+        strncpy(DBG_LastData, (char*)MyModem.dma_rx_buffer, (Size < 50) ? Size : 49);
+
+        // તમારો જૂનો કોડ...
+        Quectel_UART_RxCpltCallback(&MyModem, Size);
+        HAL_UARTEx_ReceiveToIdle_DMA(huart, MyModem.dma_rx_buffer, sizeof(MyModem.dma_rx_buffer));
+        __HAL_DMA_DISABLE_IT(huart->hdmarx, DMA_IT_HT); 
+    }
+}
+
+
+
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -767,59 +803,166 @@ void StartDefaultTask(void *argument)
 * @retval None
 */
 /* USER CODE END Header_StartGsmTask */
-
 void StartGsmTask(void *argument)
 {
   /* USER CODE BEGIN StartGsmTask */
   osDelay(2000); 
-  uint8_t fail_count = 0; // ફેલ થવાનું કાઉન્ટર
+  uint8_t fail_count = 0; 
+  GsmState_t gsm_state = GSM_STATE_SYNC; // શરૂઆત SYNC થી થશે
   
+  // 🔴 ફર્સ્ટ કિક (DMA ના દરવાજા ખોલો)
+  HAL_UARTEx_ReceiveToIdle_DMA(MyModem.huart, MyModem.dma_rx_buffer, sizeof(MyModem.dma_rx_buffer));
+  __HAL_DMA_DISABLE_IT(MyModem.huart->hdmarx, DMA_IT_HT);
+
   /* Infinite loop */
   for(;;)
   {
+      switch (gsm_state)
+      {
+          // ==========================================================
+          // 🟢 STEP 0: મોડેમને જગાડવું અને સ્પીડ સેટ કરવી
+          // ==========================================================
+          case GSM_STATE_SYNC:
+              if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                  lcd_clear(); lcd_put_cur(0, 0); lcd_send_string("0. WAKING UP...");
+                  osMutexRelease(lcdMutexHandle);
+              }
 
-    // કમાન્ડ મોકલો
-    if (Quectel_Send_AT_Command(&MyModem, "AT\r\n", "OK", 1000) == GSM_OK) 
-    {
-        fail_count = 0; // જો OK આવે તો કાઉન્ટર ઝીરો કરી દો
-        
-        if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
-            lcd_clear();
-            lcd_put_cur(0, 0);
-            lcd_send_string("Modem OK");
-            osMutexRelease(lcdMutexHandle);
-        }
-    } 
-    else 
-    {
-        fail_count++; // જો ફેલ થાય તો કાઉન્ટર વધારો
-        
-        if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
-            lcd_clear();
-            lcd_put_cur(0, 0);
-            lcd_send_string("Modem Fail");
-            osMutexRelease(lcdMutexHandle);
-        }
+              // Auto-Baud ડમી કમાન્ડ્સ
+              for(int i=0; i<3; i++) {
+                  HAL_UART_Transmit(MyModem.huart, (uint8_t*)"AT\r\n", 4, 200);
+                  osDelay(300); 
+              }
+              
+              HAL_UART_AbortReceive(MyModem.huart);
+              __HAL_UART_CLEAR_FLAG(MyModem.huart, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
+              MyModem.huart->ErrorCode = HAL_UART_ERROR_NONE;
+              HAL_UARTEx_ReceiveToIdle_DMA(MyModem.huart, MyModem.dma_rx_buffer, sizeof(MyModem.dma_rx_buffer));
+              __HAL_DMA_DISABLE_IT(MyModem.huart->hdmarx, DMA_IT_HT);
 
-        // 🔴 AUTO-RECOVERY: જો સળંગ 3 વાર ફેલ જાય, તો મોડેમને રીબૂટ કરો!
-        if (fail_count >= 3) 
-        {
-            if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
-                lcd_put_cur(1, 0); lcd_send_string("Re-Booting...");
-                osMutexRelease(lcdMutexHandle);
-            }
-            
-            // 2.1 સેકન્ડનો બૂટ પલ્સ
-            HAL_GPIO_WritePin(mcu_gsm_pwr_GPIO_Port, mcu_gsm_pwr_Pin, GPIO_PIN_SET); 
-            osDelay(2100); 
-            HAL_GPIO_WritePin(mcu_gsm_pwr_GPIO_Port, mcu_gsm_pwr_Pin, GPIO_PIN_RESET);
+              // ફાઇનલ AT ચેક કરો
+              if (Quectel_Send_AT_Command(&MyModem, "AT\r\n", "OK", 1000) == GSM_OK) {
+                  fail_count = 0;
+                  gsm_state = GSM_STATE_SIM; // જો OK આવે તો આગળના સ્ટેપમાં જાવ
+              } else {
+                  fail_count++;
+              }
+              break;
 
-            osDelay(10000); // બુટ થવાનો સમય આપો
-            fail_count = 0; // રીબૂટ કર્યા પછી કાઉન્ટર પાછું ઝીરો કરો
-        }
-    }
-    
-    osDelay(2000); // 2 સેકન્ડનો વિરામ
+          // ==========================================================
+          // 🟢 STEP 1: સીમ કાર્ડ ચેક કરો (SIM Card)
+          // ==========================================================
+          case GSM_STATE_SIM:
+              if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                  lcd_clear(); lcd_put_cur(0, 0); lcd_send_string("1. CHECK SIM...");
+                  osMutexRelease(lcdMutexHandle);
+              }
+
+              if (Quectel_Send_AT_Command(&MyModem, "AT+CPIN?\r\n", "+CPIN: READY", 2000) == GSM_OK) {
+                  fail_count = 0;
+                  gsm_state = GSM_STATE_SIGNAL; // સીમ બરાબર છે, આગળ વધો
+                  
+                  if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                      lcd_put_cur(1, 0); lcd_send_string("SIM: OK");
+                      osMutexRelease(lcdMutexHandle);
+                  }
+                  osDelay(1000);
+              } else {
+                  fail_count++;
+              }
+              break;
+
+          // ==========================================================
+          // 🟢 STEP 2: ટાવર / સિગ્નલ ચેક કરો (Signal Quality)
+          // ==========================================================
+          case GSM_STATE_SIGNAL:
+              if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                  lcd_clear(); lcd_put_cur(0, 0); lcd_send_string("2. CHECK TOWER...");
+                  osMutexRelease(lcdMutexHandle);
+              }
+
+              if (Quectel_Send_AT_Command(&MyModem, "AT+CSQ\r\n", "+CSQ:", 2000) == GSM_OK) {
+                  fail_count = 0;
+                  gsm_state = GSM_STATE_NETWORK; // ટાવર છે, આગળ વધો
+                  
+                  if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                      lcd_put_cur(1, 0); lcd_send_string("TOWER: OK");
+                      osMutexRelease(lcdMutexHandle);
+                  }
+                  osDelay(1000);
+              } else {
+                  fail_count++;
+              }
+              break;
+
+          // ==========================================================
+          // 🟢 STEP 3: નેટવર્ક રજીસ્ટ્રેશન ચેક કરો (Jio/Airtel)
+          // ==========================================================
+          case GSM_STATE_NETWORK:
+              if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                  lcd_clear(); lcd_put_cur(0, 0); lcd_send_string("3. NETWORK REG...");
+                  osMutexRelease(lcdMutexHandle);
+              }
+
+              // 0,1 એટલે Home Network, અને 0,5 એટલે Roaming. આપણે બંનેને પાસ કરીશું.
+              if (Quectel_Send_AT_Command(&MyModem, "AT+CREG?\r\n", "0,1", 2000) == GSM_OK || 
+                  Quectel_Send_AT_Command(&MyModem, "AT+CREG?\r\n", "0,5", 2000) == GSM_OK) 
+              {
+                  fail_count = 0;
+                  gsm_state = GSM_STATE_READY; // નેટવર્ક પકડાઈ ગયું!
+                  
+                  if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                      lcd_put_cur(1, 0); lcd_send_string("NETWORK: OK");
+                      osMutexRelease(lcdMutexHandle);
+                  }
+                  osDelay(1000);
+              } else {
+                  fail_count++;
+              }
+              break;
+
+          // ==========================================================
+          // 🟢 STEP 4: મોડેમ એકદમ રેડી છે! (Ready for Internet)
+          // ==========================================================
+          case GSM_STATE_READY:
+              if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+                  lcd_clear(); 
+                  lcd_put_cur(0, 0); lcd_send_string("GSM IS READY! \xDF"); // \xDF એટલે ડિગ્રી/સ્ટાર સિમ્બોલ
+                  lcd_put_cur(1, 0); lcd_send_string("ALL SYSTEMS GO");
+                  osMutexRelease(lcdMutexHandle);
+              }
+              
+              // અહી આપણે ઈન્ટરનેટ (MQTT/HTTP) ચાલુ કરવાનો કોડ લખીશું
+              osDelay(5000); 
+              break;
+      }
+
+      // 🔴 AUTO-RECOVERY: જો કોઈપણ સ્ટેપ સળંગ 3 વાર ફેલ જાય!
+      if (fail_count >= 3) 
+      {
+          if (osMutexAcquire(lcdMutexHandle, osWaitForever) == osOK) {
+              lcd_clear(); lcd_put_cur(0, 0); lcd_send_string("ERROR: RESETTING");
+              osMutexRelease(lcdMutexHandle);
+          }
+          
+          // હાર્ડવેર રીસેટ પલ્સ
+          HAL_GPIO_WritePin(mcu_gsm_pwr_GPIO_Port, mcu_gsm_pwr_Pin, GPIO_PIN_SET); 
+          osDelay(2100); 
+          HAL_GPIO_WritePin(mcu_gsm_pwr_GPIO_Port, mcu_gsm_pwr_Pin, GPIO_PIN_RESET);
+
+          osDelay(10000); 
+          
+          HAL_UART_AbortReceive(MyModem.huart);
+          __HAL_UART_CLEAR_FLAG(MyModem.huart, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
+          MyModem.huart->ErrorCode = HAL_UART_ERROR_NONE;
+          HAL_UARTEx_ReceiveToIdle_DMA(MyModem.huart, MyModem.dma_rx_buffer, sizeof(MyModem.dma_rx_buffer));
+          __HAL_DMA_DISABLE_IT(MyModem.huart->hdmarx, DMA_IT_HT);
+
+          fail_count = 0; 
+          gsm_state = GSM_STATE_SYNC; // પાછા ઝીરો થી શરૂ કરો!
+      }
+      
+      osDelay(1000); // 1 સેકન્ડનો વિરામ
   }
   /* USER CODE END StartGsmTask */
 }

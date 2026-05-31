@@ -52,4 +52,6 @@ void Quectel_Init(Quectel_Handle_t *hgsm, UART_HandleTypeDef *huart);
 // ઇન્ટરપ્ટ (ISR) માંથી ડેટા આપવા માટે
 void Quectel_UART_RxCpltCallback(Quectel_Handle_t *hgsm, uint16_t Size);
 GSM_Status_t Quectel_Send_AT_Command(Quectel_Handle_t *hgsm, const char* cmd, const char* expected_response, uint32_t timeout_ms);
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart);
+
 #endif /* QUECTEL_EC200_H */

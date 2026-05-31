@@ -40,7 +40,7 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/lcd.c    
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/quectel_ec200.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/lwrb.c
-    )
+)
 
 # STM32 HAL/LL Drivers
 set(STM32_Drivers_Src

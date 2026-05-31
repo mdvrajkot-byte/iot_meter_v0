@@ -144,3 +144,29 @@ GSM_Status_t Quectel_Send_AT_Command(Quectel_Handle_t *hgsm, const char* cmd, co
     
     return GSM_OK; // જો કોઈ જવાબ ના જોતો હોય તો સીધું OK આપી દો
 }
+
+// =====================================================================
+// 🔴 AUTO-RECOVERY FROM UART ERRORS (DMA MODE)
+// =====================================================================
+
+extern uint32_t DBG_RxCount;
+extern uint32_t DBG_ErrCount;
+extern uint32_t DBG_LastErrorCode;
+extern char DBG_LastData[50];
+
+extern Quectel_Handle_t MyModem;
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2) 
+    {
+        DBG_ErrCount++; // એરર કાઉન્ટર વધારો
+        DBG_LastErrorCode = huart->ErrorCode; // કઈ એરર આવી તે સેવ કરો (1 = PE, 2 = FE, 4 = NE, 8 = ORE)
+
+        // તમારો જૂનો કોડ...
+        __HAL_UART_CLEAR_FLAG(huart, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
+        huart->ErrorCode = HAL_UART_ERROR_NONE;
+        HAL_UARTEx_ReceiveToIdle_DMA(huart, MyModem.dma_rx_buffer, sizeof(MyModem.dma_rx_buffer));
+        __HAL_DMA_DISABLE_IT(huart->hdmarx, DMA_IT_HT); 
+    }
+}
