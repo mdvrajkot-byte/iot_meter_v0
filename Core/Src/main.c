@@ -27,6 +27,8 @@
 #include <string.h>
 #include <stdio.h>  
 #include "quectel_ec200.h"
+#include "lwcell/lwcell.h"
+#include "lwcell/apps/lwcell_mqtt_client.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
